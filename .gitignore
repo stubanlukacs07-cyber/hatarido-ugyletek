@@ -1,0 +1,6 @@
+# Soha ne kerüljön fel adatmentés a GitHubra
+*.json
+!manifest.webmanifest
+mentes/
+backup/
+.DS_Store
