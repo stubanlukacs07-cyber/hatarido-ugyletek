@@ -1513,7 +1513,7 @@ function bankTile(b) {
   const st = statsFor(tradesOf(b.id)), dp = depSummary(depositsOf(b.id));
   return '<button class="bank-tile" style="--bc:' + h(b.color) + '" data-bank="' + h(b.id) + '">' +
     '<div class="bt-top"><span class="mono' + ((b.short || b.name).length > 3 ? ' long' : '') + '">' + h((b.short || b.name).slice(0, 5)) + '</span><span class="bt-name">' + h(b.name) + '</span></div>' +
-    '<div><div style="font-size:12.5px;opacity:.85">Realizált eredmény</div><div class="bt-num">' + fmtFt(st.sum, {sign: true}) + '</div></div>' +
+    (st.nAll === 0 && st.open ? '<div><div style="font-size:12.5px;opacity:.85">Nyitott pozíciók piaci áron</div><div class="bt-num">' + fmtFt(mtmTotal(tradesOf(b.id)).sum, {sign: true}) + '</div></div>' : '<div><div style="font-size:12.5px;opacity:.85">Realizált eredmény</div><div class="bt-num">' + fmtFt(st.sum, {sign: true}) + '</div></div>') +
     '<div class="bt-row"><span><b>' + st.n + '</b> zárt</span><span><b>' + st.open + '</b> nyitott</span><span><b>' + st.pend + '</b> függő order</span>' + (dp.cap ? '<span>Lekötve: <b>' + fmtCompact(dp.cap) + ' Ft</b></span>' : '') + '</div></button>';
 }
 function viewDash() {
@@ -1524,18 +1524,21 @@ function viewDash() {
   const pos = perBank.reduce((a, x) => a + Math.max(0, x.st.sum), 0);
   const t0 = TODAY(), due = dueItems(), due7 = due.filter(i => i.date <= addDays(t0, 7)).length;
   const flagged = allFlagged().length;
+  const openMode = all.nAll === 0;
+  const bankVal = x => openMode ? mtmTotal(tradesOf(x.b.id)).sum : x.st.sum;
+  const posV = perBank.reduce((acc, x) => acc + Math.abs(bankVal(x)), 0);
   let html = '<section class="hero"><div>' +
-    '<p class="hero-lead">Összes realizált eredmény, minden bank együtt</p>' +
-    '<div class="hero-num ' + signCls(all.sum) + '">' + fmtFt(all.sum, {sign: true}) + '</div>' +
-    '<p class="hero-lead">' + all.n + ' lezárt ügylet' + (all.winRate != null ? ', ' + nf1.format(all.winRate * 100) + '% nyereséges' : '') + (all.nAll > all.n ? ' és ' + (all.nAll - all.n) + ' egyéb tétel' : '') + '</p>' +
-    '<div class="contrib" role="img" aria-label="Bankok hozzájárulása az eredményhez">' + perBank.map(x => x.st.sum > 0 && pos ? '<i style="width:' + (x.st.sum / pos * 100) + '%;background:' + h(x.b.color) + '" title="' + h(x.b.name) + '"></i>' : '').join('') + '</div>' +
-    '<div class="contrib-legend">' + perBank.map(x => '<div><span class="sw" style="background:' + h(x.b.color) + '"></span>' + h(x.b.name) + '<b class="' + signCls(x.st.sum) + '">' + fmtFt(x.st.sum, {sign: true}) + '</b></div>').join('') + '</div>' +
+    '<p class="hero-lead">' + (openMode ? 'Nyitott pozíciók becsült eredménye piaci áron, minden bank együtt' : 'Összes realizált eredmény, minden bank együtt') + '</p>' +
+    '<div class="hero-num ' + signCls(openMode ? mt.sum : all.sum) + '">' + fmtFt(openMode ? mt.sum : all.sum, {sign: true}) + '</div>' +
+    '<p class="hero-lead">' + (openMode ? all.open + ' nyitott pozíció és ' + all.pend + ' függő order' + (all.openPnlN ? ', ebből ' + all.openPnlN + ' opció rögzített eredménnyel (' + fmtFt(all.openPnl, {sign: true}) + ')' : '') : all.n + ' lezárt ügylet' + (all.winRate != null ? ', ' + nf1.format(all.winRate * 100) + '% nyereséges' : '') + (all.nAll > all.n ? ' és ' + (all.nAll - all.n) + ' egyéb tétel' : '')) + '</p>' +
+    '<div class="contrib" role="img" aria-label="Bankok megoszlása">' + perBank.map(x => { const v = openMode ? Math.abs(bankVal(x)) : Math.max(0, x.st.sum); const tot = openMode ? posV : pos; return v > 0 && tot ? '<i style="width:' + (v / tot * 100) + '%;background:' + h(x.b.color) + '" title="' + h(x.b.name) + '"></i>' : ''; }).join('') + '</div>' +
+    '<div class="contrib-legend">' + perBank.map(x => '<div><span class="sw" style="background:' + h(x.b.color) + '"></span>' + h(x.b.name) + '<b class="' + signCls(bankVal(x)) + '">' + fmtFt(bankVal(x), {sign: true}) + '</b></div>').join('') + '</div>' +
     '<div class="hero-side">' +
       '<button class="mini" data-go="due" style="border:0;text-align:left"><div class="l">Esedékes 7 napon belül</div><div class="v">' + due7 + ' tétel</div></button>' +
-      '<button class="mini" data-go="market" style="border:0;text-align:left"><div class="l">Nyitott pozíció, piaci áron</div><div class="v ' + signCls(mt.sum) + '">' + (mt.n ? fmtCompact(mt.sum) + ' Ft' : all.open + ' db') + '</div></button>' +
+      (openMode ? '<button class="mini" data-go="market" style="border:0;text-align:left"><div class="l">Nyitott pozíció</div><div class="v">' + all.open + ' db</div></button>' : '<button class="mini" data-go="market" style="border:0;text-align:left"><div class="l">Nyitott pozíció, piaci áron</div><div class="v ' + signCls(mt.sum) + '">' + (mt.n ? fmtCompact(mt.sum) + ' Ft' : all.open + ' db') + '</div></button>') +
       '<div class="mini"><div class="l">Függő order</div><div class="v">' + all.pend + ' db</div></div>' +
     '</div></div>' +
-    '<div><div class="panel-head"><div><h2>Halmozott eredmény</h2><p class="sub">Havonta, bankonként és összesen</p></div></div><div class="chart tall"><canvas id="c-cum"></canvas></div>' +
+    (openMode ? '<div><div class="panel-head"><div><h2>Nyitott pozíciók devizapáronként</h2><p class="sub">Becsült eredmény a mostani árfolyamon</p></div></div><div class="chart tall"><canvas id="c-mtm"></canvas></div>' : '<div><div class="panel-head"><div><h2>Halmozott eredmény</h2><p class="sub">Havonta, bankonként és összesen</p></div></div><div class="chart tall"><canvas id="c-cum"></canvas></div>') +
     (all.undatedN ? '<p class="legend-note">A grafikonon nem szerepel ' + all.undatedN + ' dátum nélküli tétel (' + fmtFt(all.undatedSum, {sign: true}) + '), az összesítésben igen.</p>' : '') + '</div></section>';
 
   html += '<div class="grid bank-grid section-gap">' + bs.map(bankTile).join('') + '<button class="bank-tile add" data-act="new-bank">' + ic('plus') + ' Bank hozzáadása</button></div>';
@@ -1564,7 +1567,12 @@ function viewDash() {
 
   const ids = bs.map(b => b.id);
   return {title: 'Áttekintés', sub: 'Mai nap: ' + fmtDate(t0) + ' ' + HU_DOW[new Date().getDay()], html, mount() {
-    if (!chartCumulative('c-cum', ids)) $('#c-cum').parentNode.innerHTML = noData();
+    if (openMode) {
+      const m = {}; S.trades.forEach(t => { const r = mtm(t); if (r) m[t.pair] = (m[t.pair] || 0) + r.pnl; });
+      const arr = Object.entries(m).sort((x, y) => y[1] - x[1]);
+      if (arr.length) mk('c-mtm', {type: 'bar', data: {labels: arr.map(x => x[0]), datasets: [{label: 'Piaci áron', data: arr.map(x => Math.round(x[1])), backgroundColor: arr.map(x => x[1] >= 0 ? css('--profit') : css('--loss')), borderRadius: 6, maxBarThickness: 26}]}, options: baseOpts({horizontal: true, legend: false})});
+      else $('#c-mtm').parentNode.innerHTML = noData('Még nincs árfolyam a nyitott pozíciókhoz.');
+    } else if (!chartCumulative('c-cum', ids)) $('#c-cum').parentNode.innerHTML = noData();
     if (!chartMonthly('c-month', ids)) $('#c-month').parentNode.innerHTML = noData();
     if (!chartPairs('c-pairs', S.trades)) $('#c-pairs').parentNode.innerHTML = noData();
     if (!chartShare('c-share', ids)) $('#c-share').parentNode.innerHTML = noData();
@@ -2295,16 +2303,24 @@ async function importJSON(file) {
   try { d = JSON.parse(await file.text()); } catch (e) { return toast('A fájl nem érvényes JSON mentés.', true); }
   if (!d || !Array.isArray(d.trades) || !Array.isArray(d.banks)) return toast('Ez nem ennek az alkalmazásnak a mentése.', true);
   const n = d.banks.length + d.trades.length + (d.deposits || []).length + (d.accounts || []).length;
-  const ok = await askModal('Mentés visszatöltése', d.banks.length + ' bank, ' + d.trades.length + ' ügylet, ' + (d.deposits || []).length + ' lekötés és ' + (d.accounts || []).length + ' számla töltődik vissza. Az azonos azonosítójú tételek felülíródnak, a többi megmarad.', '', [['Mégse', false], ['Visszatöltés', true, 'primary']]);
-  if (!ok) return;
-  let done = 0;
+  const isReplace = d.mode === 'replace';
+  const summary = d.banks.length + ' bank, ' + d.trades.length + ' ügylet, ' + (d.deposits || []).length + ' lekötés és ' + (d.accounts || []).length + ' számla van a fájlban.' + (d.description ? ' ' + d.description : '');
+  const choice = await askModal('Mentés visszatöltése', summary, '<p style="font-size:13.5px;color:var(--ink-2);margin:0 0 6px"><b>Csere:</b> csak a fájlban lévő tételek maradnak meg, minden más törlődik (a jelszótár és a beállítások megmaradnak). <b>Hozzáadás:</b> a fájl tételei bekerülnek vagy frissülnek, a többi megmarad.</p>', [['Mégse', false], ['Hozzáadás', 'merge', isReplace ? '' : 'primary'], ['Csere', 'replace', isReplace ? 'primary' : '']]);
+  if (!choice) return;
+  let done = 0, removed = 0;
   const all = [['banks', d.banks], ['trades', d.trades], ['deposits', d.deposits || []], ['accounts', d.accounts || []]];
   try {
+    if (choice === 'replace') {
+      for (const [k, arr] of all) {
+        const keepIds = new Set(arr.filter(x => x && x.id).map(x => x.id));
+        for (const it of S[k].slice()) if (!keepIds.has(it.id)) { await removeItem(k, it.id); removed++; if (removed % 25 === 0) toast('Törlés: ' + removed); }
+      }
+    }
     for (const [k, arr] of all) for (const it of arr) { if (it && it.id) { await saveItem(k, it); done++; if (done % 25 === 0) toast('Visszatöltés: ' + done + ' / ' + n); } }
     if (d.settings) await saveSettings(d.settings);
     if (d.market && d.market.rates && S.mode === 'online' && !S.local) await withRetry(() => DB.doc(BASE + '/market').set(clean(d.market)));
     if (d.vault && !S.vaultDoc && S.mode === 'online') await withRetry(() => DB.doc(BASE + '/vault').set(d.vault));
-    toast('Visszatöltve: ' + done + ' tétel.');
+    toast('Kész: ' + done + ' tétel betöltve' + (removed ? ', ' + removed + ' törölve' : '') + '.');
     if (S.local) { Live.fetch(); }
   } catch (e) { toast('Hiba a visszatöltés közben (' + done + ' tétel kész): ' + ((e && e.message) || ''), true); }
 }
