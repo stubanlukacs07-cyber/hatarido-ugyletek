@@ -560,6 +560,7 @@ details.more ul{margin:6px 0 0;padding-left:18px}
 .tk-upd.err{background:var(--loss-soft);color:var(--loss)}
 .q-h{font:700 15px/1.3 var(--f-display);color:var(--muted);margin:16px 0 8px}
 .steps{margin:0 0 12px;padding-left:20px;font-size:14px;color:var(--ink-2)} .steps li{margin-bottom:6px} .steps code{background:var(--surface-2);padding:1px 6px;border-radius:6px}
+.banner.upd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--brand-soft)} .banner.upd span{flex:1;min-width:200px}
 </style>
 </head>
 <body>
@@ -747,6 +748,7 @@ async function initStore() {
     subscribeAll(false);
     Live.start();
     Sync.init();
+    Updater.init();
     return;
   }
   let d = null, u = null;
@@ -1321,6 +1323,54 @@ const Sync = {
   async disconnect() { this.cfg = null; this.key = null; this.salt = null; this.err = null; localStorage.removeItem(this.CFG); await this.clearKey(); }
 };
 
+/* ================= app update check (standalone only) ================= */
+const APP_VERSION = 'v:20260930T134406';
+const Updater = {
+  available: null, lastCheck: 0,
+  init() {
+    if (!STANDALONE || location.protocol === 'file:') return;
+    setTimeout(() => this.check(false), 4000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - this.lastCheck > 10 * 60000) this.check(false); });
+  },
+  async check(manual) {
+    this.lastCheck = Date.now();
+    try {
+      const r = await fetch('./index.html?check=' + Date.now(), {cache: 'no-store'});
+      const m = (await r.text()).match(/APP_VERSION = 'v:(\d{8}T\d{6})'/);
+      if (m && 'v:' + m[1] !== APP_VERSION) { this.available = m[1]; scheduleRender(); if (manual) toast('Van új verzió, a Frissítés gombbal betöltheted.'); }
+      else if (manual) toast('A legfrissebb verziót használod.');
+    } catch (e) { if (manual) toast('Nem sikerült ellenőrizni. Van internet?', true); }
+  },
+  async apply() {
+    try { const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration(); if (reg) await reg.update(); } catch (e) {}
+    location.reload();
+  },
+  label() { const v = APP_VERSION.slice(2); return /^\d{8}T/.test(v) ? v.slice(0, 4) + '.' + v.slice(4, 6) + '.' + v.slice(6, 8) + '. ' + v.slice(9, 11) + ':' + v.slice(11, 13) : v; }
+};
+
+/* sync setup helpers: drafts survive re-renders and app switching; one-paste link code */
+const SyncDraft = {
+  KEY: 'hatarido-sync-draft-v1', pass: '',
+  get() { try { return JSON.parse(localStorage.getItem(this.KEY) || '{}') || {}; } catch (e) { return {}; } },
+  set(k, v) { const d = this.get(); d[k] = v; try { localStorage.setItem(this.KEY, JSON.stringify(d)); } catch (e) {} },
+  clear() { this.pass = ''; try { localStorage.removeItem(this.KEY); } catch (e) {} }
+};
+Sync.makeCode = async function () {
+  if (!this.cfg || !this.key) throw new Error('A szinkron nincs bekapcsolva ezen az eszközön.');
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({name: 'AES-GCM', iv}, this.key, new TextEncoder().encode(JSON.stringify({r: this.cfg.repo, t: this.cfg.token, p: this.cfg.path}))));
+  return 'HTSYNC1.' + toB64(this.salt) + '.' + toB64(iv) + '.' + toB64(ct);
+};
+Sync.connectWithCode = async function (code, pass, device) {
+  const m = String(code || '').replace(/\s+/g, '').match(/^HTSYNC1\.([^.]+)\.([^.]+)\.([^.]+)$/);
+  if (!m) throw new Error('Ez nem kapcsolókód. A „HTSYNC1.” kezdetű szöveget másold be.');
+  if ((pass || '').length < 8) throw new Error('Add meg a szinkron jelszót.');
+  let info;
+  try { const key = await this.derive(pass, fromB64(m[1])); info = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name: 'AES-GCM', iv: fromB64(m[2])}, key, fromB64(m[3])))); }
+  catch (e) { throw new Error('A szinkron jelszó nem ehhez a kapcsolókódhoz tartozik.'); }
+  await this.connect(info.r, info.t, pass, device);
+};
+
 /* ================= charts ================= */
 const CH = {};
 function destroyCharts() { Object.keys(CH).forEach(k => { try { CH[k].destroy(); } catch (e) {} delete CH[k]; }); }
@@ -1487,7 +1537,7 @@ function render() {
   const selS = focusId && 'selectionStart' in ae ? ae.selectionStart : null;
   destroyCharts();
   renderTicker();
-  $('#banner').innerHTML = S.mode === 'offline' ? '<div class="banner warn">Ebben a nézetben nincs elérhető tárhely, ezért a változtatások nem mentődnek. Nyisd meg a claude.ai-on bejelentkezve az adataidhoz.</div>' : '';
+  $('#banner').innerHTML = (S.mode === 'offline' ? '<div class="banner warn">Ebben a nézetben nincs elérhető tárhely, ezért a változtatások nem mentődnek. Nyisd meg a claude.ai-on bejelentkezve az adataidhoz.</div>' : '') + (Updater.available ? '<div class="banner upd"><span>Elérhető az app új verziója. Az adataid és a beállításaid megmaradnak.</span><button class="btn primary sm" data-act="app-update">Frissítés most</button></div>' : '');
   if (!allReady()) { setTop('Betöltés'); v.innerHTML = '<div class="loading"><div class="spin"></div>Adatok betöltése…</div>'; return; }
   let out;
   try {
@@ -2256,15 +2306,20 @@ function syncPanel() {
   if (c && Sync.key) {
     s += '<dl class="kv"><dt>Repó</dt><dd>' + h(c.repo) + '</dd><dt>Ez az eszköz</dt><dd>' + h(c.device) + '</dd><dt>Utolsó szinkron</dt><dd>' + (Sync.last ? fmtStamp(Sync.last) : '—') + '</dd></dl>' +
       (Sync.err ? '<div class="banner warn" style="margin:10px 0 0">' + h(Sync.err) + '</div>' : '') +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn primary" data-act="sync-now"' + (Sync.busy ? ' disabled' : '') + '>' + ic('refresh') + 'Szinkronizálás most</button><button class="btn" data-act="sync-off">Leválasztás ezen az eszközön</button></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn primary" data-act="sync-now"' + (Sync.busy ? ' disabled' : '') + '>' + ic('refresh') + 'Szinkronizálás most</button><button class="btn" data-act="sync-code">' + ic('copy') + 'Kapcsolókód másik eszközhöz</button><button class="btn" data-act="sync-off">Leválasztás ezen az eszközön</button></div>' +
       '<p class="legend-note">Minden mentés után pár másodpercen belül, és az app megnyitásakor magától szinkronizál. Ha ugyanazt a tételt két eszközön is módosítod, a későbbi módosítás marad meg.</p>';
   } else if (c && !Sync.key) {
     s += (Sync.err ? '<div class="banner warn">' + h(Sync.err) + '</div>' : '') + '<div class="form"><div class="fld full"><label for="sy-pass2">Szinkron jelszó</label><input id="sy-pass2" type="password" autocomplete="current-password" data-enter="sync-rekey"></div></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn primary" data-act="sync-rekey">Folytatás</button><button class="btn" data-act="sync-off">Leválasztás</button></div>';
   } else {
-    s += '<ol class="steps"><li>Hozz létre a GitHubon egy <b>privát</b> repót (pl. <code>hatarido-adatok</code>), és pipáld be az „Add a README file” opciót.</li><li>Készíts hozzá egy tokent: GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token. Repository access: csak ez az egy repó; Permissions → Contents: Read and write.</li><li>Töltsd ki az alábbi mezőket <b>minden eszközön ugyanazzal</b> a repóval és szinkron jelszóval. A tokent ugyanazt is használhatod.</li></ol>' +
-      '<div class="form">' + fld('sy-repo', 'Repó (felhasználónév/repónév)', '', {ph: 'pl. felhasznalo/hatarido-adatok', full: true}) + fld('sy-token', 'GitHub token', '', {type: 'password', full: true, hint: 'Csak ezen az eszközön tárolódik.'}) +
-      fld('sy-pass', 'Szinkron jelszó (legalább 8 karakter)', '', {type: 'password', hint: 'Ezzel titkosítom az adatokat. Ha elfelejted, a GitHubon lévő adat nem nyitható ki, de az eszközödön lévő adat megmarad.'}) + fld('sy-dev', 'Eszköz neve', matchMedia('(pointer: coarse)').matches ? 'Telefon' : 'Számítógép') + '</div>' +
-      '<div style="margin-top:12px"><button class="btn primary" data-act="sync-connect">' + ic('refresh') + 'Szinkron bekapcsolása</button></div>';
+    const dr = SyncDraft.get(), dev0 = dr.dev || (matchMedia('(pointer: coarse)').matches ? 'Telefon' : 'Számítógép');
+    s += '<div class="banner" style="margin-bottom:12px"><b>A legegyszerűbb:</b> ha egy másik eszközön már be van kapcsolva a szinkron, ott nyomd meg a „Kapcsolókód másik eszközhöz” gombot, és ide csak azt az egy kódot másold be, meg a szinkron jelszót.</div>' +
+      '<div class="form">' + fld('sy-code', 'Kapcsolókód', dr.code || '', {full: true, ph: 'HTSYNC1.…'}) + fld('sy-pass-c', 'Szinkron jelszó', SyncDraft.pass, {type: 'password'}) + fld('sy-dev-c', 'Eszköz neve', dev0) + '</div>' +
+      '<div style="margin:12px 0 18px"><button class="btn primary" data-act="sync-connect-code">' + ic('refresh') + 'Bekapcsolás kapcsolókóddal</button></div>' +
+      '<details class="more"' + (dr.repo || dr.token ? ' open' : '') + '><summary>Első beállítás repóval és tokennel</summary><div style="margin-top:10px">' +
+      '<ol class="steps"><li>Hozz létre a GitHubon egy <b>privát</b> repót (pl. <code>hatarido-adatok</code>), és pipáld be az „Add a README file” opciót.</li><li>Készíts hozzá egy tokent: GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token. Repository access: csak ez az egy repó; Permissions → Contents: Read and write.</li><li>Töltsd ki az alábbi mezőket <b>minden eszközön ugyanazzal</b> a repóval és szinkron jelszóval. A tokent ugyanazt is használhatod.</li></ol>' +
+      '<div class="form">' + fld('sy-repo', 'Repó (felhasználónév/repónév)', dr.repo || '', {ph: 'pl. felhasznalo/hatarido-adatok', full: true}) + fld('sy-token', 'GitHub token', dr.token || '', {type: 'password', full: true, hint: 'A beírt adat akkor is megmarad, ha közben átlépsz egy másik appba.'}) +
+      fld('sy-pass', 'Szinkron jelszó (legalább 8 karakter)', SyncDraft.pass, {type: 'password', hint: 'Ezzel titkosítom az adatokat. Ha elfelejted, a GitHubon lévő adat nem nyitható ki, de az eszközödön lévő adat megmarad.'}) + fld('sy-dev', 'Eszköz neve', dev0) + '</div>' +
+      '<div style="margin-top:12px"><button class="btn primary" data-act="sync-connect">' + ic('refresh') + 'Szinkron bekapcsolása</button></div></div></details>';
   }
   return s + '</div>';
 }
@@ -2284,6 +2339,7 @@ function viewData() {
     return '<tr style="cursor:default"><td><span class="chip bank" style="background:' + h(bankColor(it.bankId)) + '">' + h(bankById(it.bankId).short) + '</span></td><td><b>' + h(name) + '</b></td><td class="mut">' + h(it.source || '') + '</td><td style="white-space:normal;max-width:420px">' + it.flags.map(h).join('<br>') + '</td><td style="white-space:nowrap"><button class="btn sm" data-' + (isT ? 'edit-trade' : 'edit-dep') + '="' + h(it.id) + '">' + ic('edit') + 'Megnyitás</button> <button class="btn sm" data-resolve="' + x.kind + '|' + h(it.id) + '">' + ic('check') + 'Rendben</button></td></tr>';
   }).join('') + '</tbody></table></div>';
   html += '</div>';
+  if (S.local) html += '<div class="panel section-gap"><div class="panel-head"><div><h2>App verzió</h2><p class="sub">' + h(Updater.label()) + (Updater.available ? ', új verzió elérhető' : '') + '</p></div><button class="btn sm" data-act="app-check">' + ic('refresh') + 'Frissítés keresése</button>' + (Updater.available ? '<button class="btn primary sm" data-act="app-update">Frissítés most</button>' : '') + '</div><p class="legend-note" style="margin:0">Frissítéskor az adataid, a jelszótár és a szinkron beállításai is megmaradnak. Az appot ne töröld a főképernyőről, mert azzal az adatai is törlődnek.</p></div>';
   html += S.local ? '<div class="panel section-gap"><h2>Az adatok helye</h2><p class="sub" style="margin:0">Minden adat csak ezen az eszközön, ebben az appban van: nem kerül fel a GitHubra és semmilyen szerverre. Ha törlöd az appot vagy a böngésző adatait, az adatok is törlődnek, ezért tölts le rendszeresen mentést. Másik eszközre a mentés visszatöltésével viheted át őket.</p></div>' : '<div class="panel section-gap"><h2>Az adatok helye</h2><p class="sub" style="margin:0">Minden a saját, privát adatterületeden van ehhez az oldalhoz: ha a linket megosztod valakivel, ő nem látja az ügyleteidet és a jelszavaidat. Az Excelből átvett értékeket egyenként ellenőriztem: a bankonkénti eredmények fillérre egyeznek az Excel NYERESÉG/VESZTESÉG oszlopának összegével.</p></div>';
   return {title: 'Adatok és mentés', html};
 }
@@ -2719,7 +2775,11 @@ document.addEventListener('click', async e => {
         case 'vault-new': openVaultEntry(null); break;
         case 'vault-change': await changeMaster(); break;
         case 'export-json': exportJSON(); break;
-        case 'sync-connect': { const b = el; b.disabled = true; b.textContent = 'Kapcsolódás…'; try { await Sync.connect(val('sy-repo'), val('sy-token'), val('sy-pass'), val('sy-dev')); toast('A szinkron be van kapcsolva.'); } catch (err) { toast(err.message, true); } render(); break; }
+        case 'sync-connect': { const b = el; b.disabled = true; b.textContent = 'Kapcsolódás…'; try { await Sync.connect(val('sy-repo'), val('sy-token'), val('sy-pass'), val('sy-dev')); SyncDraft.clear(); toast('A szinkron be van kapcsolva.'); } catch (err) { toast(err.message, true); } render(); break; }
+        case 'sync-connect-code': { const b = el; b.disabled = true; b.textContent = 'Kapcsolódás…'; try { await Sync.connectWithCode(val('sy-code'), val('sy-pass-c'), val('sy-dev-c')); SyncDraft.clear(); toast('A szinkron be van kapcsolva.'); } catch (err) { toast(err.message, true); } render(); break; }
+        case 'sync-code': { const code = await Sync.makeCode(); await askModal('Kapcsolókód', 'Másold át ezt a kódot a másik eszközre (pl. küldd el magadnak), és ott a szinkron jelszóval együtt add meg. A kód a szinkron jelszó nélkül használhatatlan.', '<textarea id="code-ta" readonly style="width:100%;height:110px;border:1px solid var(--line-2);border-radius:10px;padding:8px;font:12px ui-monospace,monospace;word-break:break-all">' + h(code) + '</textarea><button class="btn sm" style="margin-top:8px" onclick="(function(b){var t=document.getElementById(\'code-ta\');t.select();try{navigator.clipboard.writeText(t.value).then(function(){b.textContent=\'Kimásolva\'},function(){document.execCommand(\'copy\');b.textContent=\'Kimásolva\'})}catch(e){document.execCommand(\'copy\');b.textContent=\'Kimásolva\'}})(this)">Másolás</button>', [['Kész', true, 'primary']]); break; }
+        case 'app-check': await Updater.check(true); render(); break;
+        case 'app-update': Updater.apply(); break;
         case 'sync-now': await Sync.syncNow('manual'); toast(Sync.err ? Sync.err : 'Szinkronizálva.', !!Sync.err); break;
         case 'sync-rekey': try { await Sync.reKey(val('sy-pass2')); toast('Szinkronizálva.'); } catch (err) { toast(err.message, true); } render(); break;
         case 'sync-off': if (await askModal('Szinkron leválasztása', 'Ezen az eszközön kikapcsolom a szinkront. Az adatok itt és a GitHubon is megmaradnak.', '', [['Mégse', false], ['Leválasztás', true, 'primary']])) { await Sync.disconnect(); render(); } break;
@@ -2740,6 +2800,11 @@ document.addEventListener('keydown', e => {
 document.addEventListener('input', e => {
   const t = e.target;
   if (t.id === 'tf-q') { UI.tf.q = t.value; renderTradeList(UI.bankId); }
+  else if (t.id === 'sy-repo') SyncDraft.set('repo', t.value);
+  else if (t.id === 'sy-token') SyncDraft.set('token', t.value);
+  else if (t.id === 'sy-dev' || t.id === 'sy-dev-c') SyncDraft.set('dev', t.value);
+  else if (t.id === 'sy-code') SyncDraft.set('code', t.value);
+  else if (t.id === 'sy-pass' || t.id === 'sy-pass-c') SyncDraft.pass = t.value;
 });
 document.addEventListener('change', e => {
   const t = e.target;
