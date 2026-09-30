@@ -1447,6 +1447,7 @@ function go(route, extra) {
   UI.route = route;
   if (extra) Object.assign(UI, extra);
   closeMenu();
+  lastViewKey = null;
   window.scrollTo(0, 0);
   render();
 }
@@ -1474,9 +1475,14 @@ function renderNav() {
   }).join('');
 }
 function setTop(title, sub) { $('#topTitle').innerHTML = h(title) + (sub ? '<small>' + h(sub) + '</small>' : ''); }
+let lastViewKey = null;
 function render() {
   renderNav();
   const v = $('#view');
+  const viewKey = [UI.route, UI.bankId, UI.bankTab, UI.evalMode].join('|');
+  const keepY = viewKey === lastViewKey ? window.scrollY : null;
+  lastViewKey = viewKey;
+  if (keepY != null) v.style.minHeight = v.offsetHeight + 'px';
   const ae = document.activeElement, focusId = ae && ae.id && v.contains(ae) ? ae.id : null;
   const selS = focusId && 'selectionStart' in ae ? ae.selectionStart : null;
   destroyCharts();
@@ -1502,7 +1508,8 @@ function render() {
   v.innerHTML = out.html;
   labelTables(v);
   if (out.mount) { try { out.mount(); } catch (e) { console.error(e); } }
-  if (focusId) { const el = document.getElementById(focusId); if (el) { el.focus(); if (selS != null && el.setSelectionRange) { try { el.setSelectionRange(selS, selS); } catch (e) {} } } }
+  if (focusId) { const el = document.getElementById(focusId); if (el) { try { el.focus({preventScroll: true}); } catch (e) { el.focus(); } if (selS != null && el.setSelectionRange) { try { el.setSelectionRange(selS, selS); } catch (e) {} } } }
+  if (keepY != null) { window.scrollTo(0, keepY); requestAnimationFrame(() => { window.scrollTo(0, keepY); v.style.minHeight = ''; }); } else v.style.minHeight = '';
 }
 
 /* ================= views ================= */
@@ -2418,6 +2425,24 @@ function openTradeForm(id, preset) {
   openDrawer(ex ? 'Ügylet szerkesztése' : (isE ? 'Új egyéb tétel' : 'Új ügylet'), body, {
     mount() {
       const upd = () => { $('#tform').dataset.kind = val('f-kind'); renderCalc(); };
+      // automatic status: closing date + closing rate => Zárt; the user can still switch it back by hand
+      let statusByHand = false, autoClosed = false;
+      const st = $('#f-status'), hint = document.createElement('span'); hint.className = 'hint'; st.parentNode.appendChild(hint);
+      st.addEventListener('change', () => { statusByHand = true; hint.textContent = ''; });
+      const autoStatus = () => {
+        if (val('f-kind') === 'egyeb') return;
+        const closing = !!val('f-close') && val('f-crate').trim() !== '';
+        if (closing && !statusByHand && st.value !== 'zart') {
+          st.value = 'zart'; autoClosed = true; hint.textContent = 'Zártra állítva, mert van zárás dátuma és záró árfolyama. Visszaállíthatod.';
+          const pnlEl = $('#f-pnl'), btn = document.querySelector('#f-calc [data-calc-apply]');
+          if (pnlEl && !pnlEl.value.trim() && btn) { pnlEl.value = numIn(+btn.dataset.calcApply); pnlEl.dataset.auto = '1'; hint.textContent += ' Az eredményt kiszámoltam, ellenőrizd.'; }
+        } else if (!closing && autoClosed && !statusByHand) {
+          st.value = t.status === 'zart' ? 'nyitott' : (t.status || 'nyitott'); autoClosed = false; hint.textContent = '';
+          const pnlEl = $('#f-pnl'); if (pnlEl && pnlEl.dataset.auto) { pnlEl.value = ''; delete pnlEl.dataset.auto; }
+        }
+      };
+      ['f-close', 'f-crate'].forEach(i => { const el = document.getElementById(i); el.addEventListener('input', () => { renderCalc(); autoStatus(); }); el.addEventListener('change', () => { renderCalc(); autoStatus(); }); });
+      $('#f-pnl').addEventListener('input', e => { delete e.target.dataset.auto; });
       ['f-kind', 'f-side', 'f-pair', 'f-qty', 'f-fwd', 'f-crate', 'f-orate'].forEach(i => { const el = document.getElementById(i); el.addEventListener('input', upd); el.addEventListener('change', upd); });
       $('#f-calc').addEventListener('input', e => { if (e.target.id === 'f-conv') renderCalc(true); });
       renderCalc();
