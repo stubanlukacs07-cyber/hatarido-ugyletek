@@ -731,7 +731,7 @@ const ic = n => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 /* ================= state ================= */
 const S = {
   banks: [], trades: [], deposits: [], accounts: [],
-  settings: {dateBasis: 'close'},
+  settings: {dateBasis: 'fwd'},
   vaultDoc: null,
   market: {rates: {}, history: []},
   ready: {banks: false, trades: false, deposits: false, accounts: false, ledger: false, vault: false, market: false},
@@ -739,7 +739,7 @@ const S = {
 };
 const UI = {
   route: 'dash', bankId: null, bankTab: 'trades',
-  tf: {status: 'all', pair: 'all', q: '', year: 'all', sort: 'open', dir: 'desc'},
+  tf: {status: 'all', pair: 'all', q: '', year: 'all', sort: 'fwd', dir: 'desc'},
   evalMode: 'year', evalYear: null, evalMonth: null,
   dueBank: 'all', cmpYear: 'all'
 };
@@ -785,7 +785,8 @@ function subscribeAll(withMarket) {
   });
   DB.doc(BASE + '/ledger').onSnapshot(s => {
     const dd = s.exists ? s.data() : {};
-    S.settings = Object.assign({dateBasis: 'close'}, (dd && dd.settings) || {});
+    S.settings = Object.assign({dateBasis: 'fwd'}, (dd && dd.settings) || {});
+    if (!S.settings.basisV2 && S.mode === 'online') { S.settings.dateBasis = 'fwd'; S.settings.basisV2 = true; setTimeout(() => saveSettings({dateBasis: 'fwd', basisV2: true}).catch(() => {}), 0); }
     S.settingsAt = (dd && dd.updatedAt) || '';
     S.ready.ledger = true; scheduleRender(true);
   }, err => onDbError(err));
@@ -1275,7 +1276,7 @@ const Sync = {
         for (const x of m[kind]) { const c = cur.get(x.id); if (!c || JSON.stringify(c, Object.keys(c).sort()) !== JSON.stringify(x, Object.keys(x).sort())) { const body = Object.assign({}, x); delete body.id; await coll.doc(x.id).set(body); } cur.delete(x.id); }
         for (const id of cur.keys()) await coll.doc(id).delete();
       }
-      if (m.ledger && (m.ledger.updatedAt || '') !== (S.settingsAt || '')) await DB.doc(BASE + '/ledger').set({settings: m.ledger.settings || {dateBasis: 'close'}, updatedAt: m.ledger.updatedAt || ''});
+      if (m.ledger && (m.ledger.updatedAt || '') !== (S.settingsAt || '')) await DB.doc(BASE + '/ledger').set({settings: m.ledger.settings || {dateBasis: 'fwd'}, updatedAt: m.ledger.updatedAt || ''});
       if (JSON.stringify(m.vault || null) !== JSON.stringify(S.vaultDoc || null)) { if (m.vault) await DB.doc(BASE + '/vault').set(m.vault); else await DB.doc(BASE + '/vault').delete(); }
       this.setTombs(m.tomb || {});
     } finally { setTimeout(() => { this.applying = false; }, 50); }
@@ -1333,7 +1334,7 @@ const Sync = {
 };
 
 /* ================= app update check (standalone only) ================= */
-const APP_VERSION = 'v:20261102T105312';
+const APP_VERSION = 'v:20261102T110106';
 const Updater = {
   available: null, lastCheck: 0,
   init() {
@@ -1692,7 +1693,7 @@ function viewBank(id) {
     html += '<div class="filters"><div class="seg" role="group" aria-label="Állapot">' + [['all', 'Mind'], ['nyitott', 'Nyitott'], ['fuggo', 'Függő order'], ['zart', 'Zárt']].map(x => '<button data-tf-status="' + x[0] + '" aria-pressed="' + (f.status === x[0]) + '">' + x[1] + '</button>').join('') + '</div>' +
       '<select class="select" id="tf-pair" aria-label="Devizapár"><option value="all">' + (isMobile() ? 'Pár' : 'Minden devizapár') + '</option>' + pairs.map(p => '<option' + (f.pair === p ? ' selected' : '') + '>' + h(p) + '</option>').join('') + '</select>' +
       periodControl('tf-year', pdates, f.year, isMobile() ? 'Minden időszak' : 'Minden időszak') +
-      '<select class="select only-m" id="tf-sort" aria-label="Rendezés">' + [['open|desc', 'Legújabb'], ['open|asc', 'Legrégebbi'], ['fwd|asc', 'Határidő'], ['pnl|desc', 'Legjobb'], ['pnl|asc', 'Legrosszabb'], ['pair|asc', 'Pár szerint']].map(x => '<option value="' + x[0] + '"' + (f.sort + '|' + f.dir === x[0] ? ' selected' : '') + '>' + x[1] + '</option>').join('') + '</select>' +
+      '<select class="select only-m" id="tf-sort" aria-label="Rendezés">' + [['fwd|desc', 'Határidő, legújabb'], ['fwd|asc', 'Határidő, legrégebbi'], ['open|desc', 'Nyitás, legújabb'], ['pnl|desc', 'Legjobb'], ['pnl|asc', 'Legrosszabb'], ['pair|asc', 'Pár szerint']].map(x => '<option value="' + x[0] + '"' + (f.sort + '|' + f.dir === x[0] ? ' selected' : '') + '>' + x[1] + '</option>').join('') + '</select>' +
       '<input class="input search" id="tf-q" type="search" placeholder="Keresés" value="' + h(f.q) + '">' +
       '<span class="spacer"></span><button class="btn" data-act="new-other" data-bankid="' + h(id) + '">' + ic('plus') + 'Egyéb tétel</button><button class="btn primary" data-act="new-trade" data-bankid="' + h(id) + '">' + ic('plus') + 'Új ügylet</button></div>' +
       '<div id="trade-list"></div>';
@@ -1744,14 +1745,14 @@ function sortTrades(list) {
     pair: t => t.pair || '', status: t => pr[t.status]
   }[f.sort] || dk;
   return list.slice().sort((a, b) => {
-    if (f.sort === 'open') { const p = (pr[a.status] || 0) - (pr[b.status] || 0); if (p) return p; }
+    if (f.sort === 'open' || f.sort === 'fwd') { const p = (pr[a.status] || 0) - (pr[b.status] || 0); if (p) return p; }
     const x = key(a), y = key(b);
     if (x < y) return -1 * dir; if (x > y) return 1 * dir;
     return (a.id < b.id ? -1 : 1) * dir;
   });
 }
 /* ---------- period (month / year) filters */
-function listDate(t) { return t.status === 'zart' ? (attrDate(t) || t.openDate || null) : (t.openDate || t.fwdDate || t.closeDate || null); }
+function listDate(t) { if (S.settings.dateBasis === 'fwd') return t.fwdDate || t.closeDate || t.openDate || null; return t.status === 'zart' ? (attrDate(t) || t.openDate || null) : (t.openDate || t.fwdDate || t.closeDate || null); }
 function periodMatch(d, p) { if (!p || p === 'all') return true; if (!d) return false; return p.length === 4 ? d.slice(0, 4) === p : d.slice(0, 7) === p; }
 function periodLabel(p) { return !p || p === 'all' ? 'Teljes időszak' : p.length === 4 ? p + '. év' : monthLabel(p, true); }
 function periodRange(p) { return p.length === 4 ? [p + '-01-01', p + '-12-31'] : [p + '-01', lastDayOf(p)]; }
@@ -2151,7 +2152,7 @@ function viewEval() {
   const prevLabel = mode === 'year' ? (+Y - 1) + '. év' : monthLabel(prevFrom.slice(0, 7), true);
   let html = '<div class="filters"><div class="seg" role="group" aria-label="Időszak"><button data-eval-mode="year" aria-pressed="' + (mode === 'year') + '">Év kiértékelése</button><button data-eval-mode="month" aria-pressed="' + (mode === 'month') + '">Havi kiértékelés</button></div>' +
     '<div class="chips">' + ys.map(y => '<button class="pill-btn" data-eval-year="' + y + '" aria-pressed="' + (Y === y) + '">' + y + '</button>').join('') + '</div><span class="spacer"></span>' +
-    '<div class="seg" role="group" aria-label="Dátum alapja"><button data-basis="close" aria-pressed="' + (S.settings.dateBasis !== 'fwd') + '" title="Az eredmény a zárás napjához tartozik">Zárás dátuma szerint</button><button data-basis="fwd" aria-pressed="' + (S.settings.dateBasis === 'fwd') + '" title="Az eredmény a pénzügyi elszámolás (határidős dátum) napjához tartozik">Elszámolás szerint</button></div></div>';
+    '<div class="seg" role="group" aria-label="Dátum alapja"><button data-basis="fwd" aria-pressed="' + (S.settings.dateBasis === 'fwd') + '" title="Az eredmény a határidős dátumhoz tartozik, amikor jóváírják">Határidő (jóváírás) szerint</button><button data-basis="close" aria-pressed="' + (S.settings.dateBasis !== 'fwd') + '" title="Az eredmény a zárás napjához tartozik">Zárás dátuma szerint</button></div></div>';
   if (mode === 'month') html += '<div class="chips m-scroll" id="month-chips" style="margin:-4px 0 14px">' + monthsBetween(Y + '-01', Y + '-12').map(k => '<button class="pill-btn" data-eval-month="' + k + '" aria-pressed="' + (M === k) + '">' + (isMobile() ? HU_MON_SHORT[+k.slice(5) - 1] : HU_MONTHS[+k.slice(5) - 1]) + '</button>').join('') + '</div>';
 
   const all = ps.total + ps.depTotal, pall = pp.total + pp.depTotal;
@@ -2363,8 +2364,8 @@ function viewData() {
     '<button class="btn primary" data-act="export-json">' + ic('download') + 'Mentés letöltése (JSON)</button><button class="btn" data-act="export-csv">' + ic('download') + 'Ügyletek Excelhez (CSV)</button>' +
     '<label class="btn" for="imp-file" style="cursor:pointer">' + ic('upload') + 'Mentés visszatöltése</label><input id="imp-file" type="file" accept=".json,application/json" hidden></div>' +
     '<dl class="kv" style="margin-top:14px"><dt>Bankok</dt><dd>' + S.banks.length + '</dd><dt>Ügyletek és tételek</dt><dd>' + S.trades.length + '</dd><dt>Lekötések</dt><dd>' + S.deposits.length + '</dd><dt>Számlák</dt><dd>' + S.accounts.length + '</dd><dt>Árfolyamok</dt><dd>' + Object.keys(S.market.rates || {}).length + ' pár</dd><dt>Tárolás</dt><dd>' + (S.local ? 'ezen az eszközön' : S.mode === 'online' ? 'saját, privát adatterület' : 'nincs mentés') + '</dd></dl></div>' +
-    '<div class="panel"><h2>Beállítások</h2><p class="sub">Melyik dátumhoz tartozzon egy lezárt ügylet eredménye a havi és éves kimutatásokban?</p><div class="seg"><button data-basis="close" aria-pressed="' + (S.settings.dateBasis !== 'fwd') + '">Zárás dátuma</button><button data-basis="fwd" aria-pressed="' + (S.settings.dateBasis === 'fwd') + '">Elszámolás (határidős dátum)</button></div>' +
-    '<p class="legend-note">Ha egy ügyletnél nincs zárás dátuma, a határidős dátumot, annak hiányában a nyitás dátumát használom.</p></div></div>';
+    '<div class="panel"><h2>Beállítások</h2><p class="sub">Melyik dátum szerint kerüljenek az ügyletek a havi és éves szűrőkbe és kimutatásokba?</p><div class="seg"><button data-basis="fwd" aria-pressed="' + (S.settings.dateBasis === 'fwd') + '">Határidő (jóváírás)</button><button data-basis="close" aria-pressed="' + (S.settings.dateBasis !== 'fwd') + '">Zárás dátuma</button></div>' +
+    '<p class="legend-note">Határidő szerint: minden ügylet abba a hónapba kerül, amikor a határidős dátuma van, vagyis amikor az eredményt jóváírják. Ha nincs határidős dátum, a zárás, annak hiányában a nyitás dátumát használom.</p></div></div>';
   html += '<div class="panel section-gap"><h2>Ellenőrizendő tételek</h2><p class="sub">Az Excel átvételekor ezeknél találtam elírást, hiányt vagy bizonytalanságot. Semmit nem töröltem: a javításoknál az eredeti érték is olvasható.</p>';
   if (!fl.length) html += '<div class="empty">Minden tétel rendben van.</div>';
   else html += '<div class="rwrap"><table class="tbl compact resp" data-head="2" style="min-width:680px"><thead><tr><th>Bank</th><th>Tétel</th><th>Forrás</th><th>Megjegyzés</th><th></th></tr></thead><tbody>' + fl.map(x => {
@@ -2414,7 +2415,7 @@ async function importJSON(file) {
       }
     }
     for (const [k, arr] of all) for (const it of arr) { if (it && it.id) { await saveItem(k, it); done++; if (done % 25 === 0) toast('Visszatöltés: ' + done + ' / ' + n); } }
-    if (d.settings) await saveSettings(d.settings);
+    if (d.settings) await saveSettings(Object.assign({}, d.settings, d.settings.basisV2 ? {} : {dateBasis: S.settings.dateBasis, basisV2: true}));
     if (d.market && d.market.rates && S.mode === 'online' && !S.local) await withRetry(() => DB.doc(BASE + '/market').set(clean(d.market)));
     if (d.vault && !S.vaultDoc && S.mode === 'online') await withRetry(() => DB.doc(BASE + '/vault').set(d.vault));
     toast('Kész: ' + done + ' tétel betöltve' + (removed ? ', ' + removed + ' törölve' : '') + '.');
@@ -2762,7 +2763,7 @@ document.addEventListener('click', async e => {
   if (t.closest('#drawer') || t.closest('#modal')) return;
 
   if ((el = t.closest('[data-go]'))) { const r = el.dataset.go; go(r); return; }
-  if ((el = t.closest('[data-bank]'))) { if (UI.bankId !== el.dataset.bank) UI.tf = {status: 'all', pair: 'all', q: '', year: 'all', sort: 'open', dir: 'desc'}; go('bank', {bankId: el.dataset.bank, bankTab: UI.bankId === el.dataset.bank && UI.route === 'bank' ? UI.bankTab : 'trades'}); return; }
+  if ((el = t.closest('[data-bank]'))) { if (UI.bankId !== el.dataset.bank) UI.tf = {status: 'all', pair: 'all', q: '', year: 'all', sort: 'fwd', dir: 'desc'}; go('bank', {bankId: el.dataset.bank, bankTab: UI.bankId === el.dataset.bank && UI.route === 'bank' ? UI.bankTab : 'trades'}); return; }
   if ((el = t.closest('[data-edit-trade]'))) { openTradeForm(el.dataset.editTrade); return; }
   if ((el = t.closest('[data-close-trade]'))) { const tr = S.trades.find(x => x.id === el.dataset.closeTrade); openTradeForm(el.dataset.closeTrade, {status: 'zart', closeDate: (tr && tr.closeDate) || TODAY()}); return; }
   if ((el = t.closest('[data-edit-dep]'))) { openDepositForm(el.dataset.editDep); return; }
