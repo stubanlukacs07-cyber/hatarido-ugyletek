@@ -561,6 +561,15 @@ details.more ul{margin:6px 0 0;padding-left:18px}
 .q-h{font:700 15px/1.3 var(--f-display);color:var(--muted);margin:16px 0 8px}
 .steps{margin:0 0 12px;padding-left:20px;font-size:14px;color:var(--ink-2)} .steps li{margin-bottom:6px} .steps code{background:var(--surface-2);padding:1px 6px;border-radius:6px}
 .banner.upd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--brand-soft)} .banner.upd span{flex:1;min-width:200px}
+.per{display:inline-flex;align-items:center;gap:4px}
+.per .select{min-width:0}
+.per-btn{font-size:20px;line-height:1;width:34px;height:36px;border:1px solid var(--line-2);background:var(--surface);color:var(--ink-2)}
+.per-btn:hover{background:var(--surface-2)}
+.panel-head .per{margin-left:auto}
+@media (max-width:700px){ .per{display:flex;width:100%} .per .select{flex:1;font-size:16px} .per-btn{width:44px;height:42px;flex:none} .panel-head .per{margin-left:0} }
+.bank-head .k .v{white-space:nowrap;font-size:clamp(13px,1.12vw,19px)}
+.bank-head .k.big .v{font-size:clamp(18px,1.9vw,24px)}
+@media (max-width:700px){ .bank-head .k .v{font-size:16px} .bank-head .k.big .v{font-size:24px} }
 </style>
 </head>
 <body>
@@ -1324,7 +1333,7 @@ const Sync = {
 };
 
 /* ================= app update check (standalone only) ================= */
-const APP_VERSION = 'v:20260930T134406';
+const APP_VERSION = 'v:20261102T105312';
 const Updater = {
   available: null, lastCheck: 0,
   init() {
@@ -1678,11 +1687,11 @@ function viewBank(id) {
   let mountTab = null;
   if (tab === 'trades') {
     const pairs = Array.from(new Set(tr.map(t => t.pair).filter(Boolean))).sort();
-    const years = Array.from(new Set(tr.map(t => (t.openDate || t.fwdDate || t.closeDate || '').slice(0, 4)).filter(Boolean))).sort();
+    const pdates = tr.map(listDate);
     const f = UI.tf;
     html += '<div class="filters"><div class="seg" role="group" aria-label="Állapot">' + [['all', 'Mind'], ['nyitott', 'Nyitott'], ['fuggo', 'Függő order'], ['zart', 'Zárt']].map(x => '<button data-tf-status="' + x[0] + '" aria-pressed="' + (f.status === x[0]) + '">' + x[1] + '</button>').join('') + '</div>' +
       '<select class="select" id="tf-pair" aria-label="Devizapár"><option value="all">' + (isMobile() ? 'Pár' : 'Minden devizapár') + '</option>' + pairs.map(p => '<option' + (f.pair === p ? ' selected' : '') + '>' + h(p) + '</option>').join('') + '</select>' +
-      '<select class="select" id="tf-year" aria-label="Év"><option value="all">' + (isMobile() ? 'Év' : 'Minden év') + '</option>' + years.map(y => '<option' + (f.year === y ? ' selected' : '') + '>' + y + '</option>').join('') + '</select>' +
+      periodControl('tf-year', pdates, f.year, isMobile() ? 'Minden időszak' : 'Minden időszak') +
       '<select class="select only-m" id="tf-sort" aria-label="Rendezés">' + [['open|desc', 'Legújabb'], ['open|asc', 'Legrégebbi'], ['fwd|asc', 'Határidő'], ['pnl|desc', 'Legjobb'], ['pnl|asc', 'Legrosszabb'], ['pair|asc', 'Pár szerint']].map(x => '<option value="' + x[0] + '"' + (f.sort + '|' + f.dir === x[0] ? ' selected' : '') + '>' + x[1] + '</option>').join('') + '</select>' +
       '<input class="input search" id="tf-q" type="search" placeholder="Keresés" value="' + h(f.q) + '">' +
       '<span class="spacer"></span><button class="btn" data-act="new-other" data-bankid="' + h(id) + '">' + ic('plus') + 'Egyéb tétel</button><button class="btn primary" data-act="new-trade" data-bankid="' + h(id) + '">' + ic('plus') + 'Új ügylet</button></div>' +
@@ -1741,12 +1750,29 @@ function sortTrades(list) {
     return (a.id < b.id ? -1 : 1) * dir;
   });
 }
+/* ---------- period (month / year) filters */
+function listDate(t) { return t.status === 'zart' ? (attrDate(t) || t.openDate || null) : (t.openDate || t.fwdDate || t.closeDate || null); }
+function periodMatch(d, p) { if (!p || p === 'all') return true; if (!d) return false; return p.length === 4 ? d.slice(0, 4) === p : d.slice(0, 7) === p; }
+function periodLabel(p) { return !p || p === 'all' ? 'Teljes időszak' : p.length === 4 ? p + '. év' : monthLabel(p, true); }
+function periodRange(p) { return p.length === 4 ? [p + '-01-01', p + '-12-31'] : [p + '-01', lastDayOf(p)]; }
+function periodOptions(dates, sel, allLabel, withYears) {
+  const ds = dates.filter(Boolean);
+  const ms = Array.from(new Set(ds.map(d => d.slice(0, 7)))).sort().reverse();
+  const ys = Array.from(new Set(ds.map(d => d.slice(0, 4)))).sort().reverse();
+  if (sel && sel !== 'all' && sel.length === 7 && !ms.includes(sel)) ms.unshift(sel);
+  const o = (v, l) => '<option value="' + v + '"' + (sel === v ? ' selected' : '') + '>' + l + '</option>';
+  return o('all', allLabel) + (ms.length ? '<optgroup label="Hónap">' + ms.map(m => o(m, monthLabel(m, true))).join('') + '</optgroup>' : '') +
+    (withYears !== false && ys.length ? '<optgroup label="Év">' + ys.map(y => o(y, y + '. év')).join('') + '</optgroup>' : '');
+}
+function periodControl(id, dates, sel, allLabel, withYears) {
+  return '<div class="per"><button class="icon-btn per-btn" data-pstep="' + id + '|1" aria-label="Előző hónap" title="Előző hónap">‹</button><select class="select" id="' + id + '" aria-label="Időszak">' + periodOptions(dates, sel, allLabel, withYears) + '</select><button class="icon-btn per-btn" data-pstep="' + id + '|-1" aria-label="Következő hónap" title="Következő hónap">›</button></div>';
+}
 function filteredTrades(bankId) {
   const f = UI.tf, q = f.q.trim().toLowerCase();
   return tradesOf(bankId).filter(t => {
     if (f.status !== 'all' && t.status !== f.status) return false;
     if (f.pair !== 'all' && t.pair !== f.pair) return false;
-    if (f.year !== 'all' && (t.openDate || t.fwdDate || t.closeDate || '').slice(0, 4) !== f.year) return false;
+    if (f.year !== 'all' && !periodMatch(listDate(t), f.year)) return false;
     if (q) {
       const hay = [t.pair, t.label, t.note, sideLabel(t), kindLabel(t), statusLabel(t.status), t.openRate, t.closeRate, t.fwdPrice, t.orderPrice, t.pnl, t.openDate, t.closeDate, t.fwdDate].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
@@ -1790,7 +1816,7 @@ function renderTradeList(bankId) {
 function pnlCell(t) {
   if (isNum(t.pnl)) return fmtFt(t.pnl, {sign: true, dec: true}) + (t.status === 'nyitott' ? '<div class="mut" style="font-size:11.5px;font-weight:500">rögzített, még nyitott</div>' : '');
   const m = mtm(t);
-  if (m) return '<span class="' + signCls(m.pnl) + '" style="font-style:italic">' + fmtFt(m.pnl, {sign: true}) + '</span><div class="mut" style="font-size:11.5px;font-weight:500">piaci áron (' + fmtRate(Math.round(m.cur * 1e5) / 1e5) + ')</div>';
+  if (m) return '<span class="' + signCls(m.pnl) + '" style="font-style:italic">' + fmtFt(m.pnl, {sign: true}) + '</span><div class="mut" style="font-size:11.5px;font-weight:500">piaci áron (' + fmtRate(roundRate(m.cur)) + ')</div>';
   if (t.status === 'fuggo' && t.orderPrice != null) { const ri = rateInfo(t.pair); if (ri && isNum(t.orderPrice)) return '<span class="mut">order ' + nf2.format((t.orderPrice - ri.v) / ri.v * 100) + '%-ra</span>'; }
   return '<span class="mut">—</span>';
 }
@@ -1816,13 +1842,13 @@ function depCard(d) {
 
 /* ---------- compare */
 function viewCompare() {
-  const bs = banksSorted(), ys = yearsAvailable(), y = UI.cmpYear;
-  const inYear = t => y === 'all' || ((attrDate(t) || '').slice(0, 4) === y);
+  const bs = banksSorted(), ys = yearsAvailable(), y = UI.cmpYear, yr = y === 'all' ? 'all' : y.slice(0, 4);
+  const inYear = t => periodMatch(attrDate(t), y);
   const cols = bs.map(b => ({b, tr: tradesOf(b.id).filter(t => t.status !== 'zart' || inYear(t)), deps: depositsOf(b.id)}));
   const allTr = S.trades.filter(t => t.status !== 'zart' || inYear(t));
   const statsC = cols.map(c => statsFor(c.tr)), statsT = statsFor(allTr);
   const depC = cols.map(c => depSummary(c.deps)), depT = depSummary(S.deposits);
-  const pdep = y === 'all' ? null : periodStats(y + '-01-01', y + '-12-31');
+  const pdep = y === 'all' ? null : periodStats(periodRange(y)[0], periodRange(y)[1]);
   const rowsDef = [
     ['Realizált eredmény', s => '<b class="' + signCls(s.sum) + '">' + fmtFt(s.sum, {sign: true}) + '</b>'],
     ['Zárt ügyletek', s => s.n + ' db'],
@@ -1842,13 +1868,15 @@ function viewCompare() {
   rowsDef.forEach(r => { t += '<tr style="cursor:default"><td>' + r[0] + '</td>' + statsC.map(s => '<td class="num">' + r[1](s) + '</td>').join('') + '<td class="num">' + r[1](statsT) + '</td></tr>'; });
   t += '<tr style="cursor:default"><td>Lekötött tőke most</td>' + depC.map(d => '<td class="num">' + (d.cap ? fmtFt(d.cap) : '—') + '</td>').join('') + '<td class="num">' + fmtFt(depT.cap) + '</td></tr>';
   t += '<tr style="cursor:default"><td>Lekötések havi hozama most</td>' + depC.map(d => '<td class="num">' + (d.monthly ? fmtFt(d.monthly) : '—') + '</td>').join('') + '<td class="num">' + fmtFt(depT.monthly) + '</td></tr>';
-  if (pdep) t += '<tr style="cursor:default"><td>Lekötések lejárt hozama ' + y + '-ben</td>' + cols.map(c => '<td class="num">' + (pdep.dep[c.b.id] ? fmtFt(pdep.dep[c.b.id]) : '—') + '</td>').join('') + '<td class="num">' + fmtFt(pdep.depTotal) + '</td></tr>';
+  if (pdep) t += '<tr style="cursor:default"><td>Lekötések lejárt hozama (' + h(periodLabel(y)) + ')</td>' + cols.map(c => '<td class="num">' + (pdep.dep[c.b.id] ? fmtFt(pdep.dep[c.b.id]) : '—') + '</td>').join('') + '<td class="num">' + fmtFt(pdep.depTotal) + '</td></tr>';
   else t += '<tr style="cursor:default"><td>Lekötések lejárt hozama</td>' + depC.map(d => '<td class="num">' + (d.matured ? fmtFt(d.matured) : '—') + '</td>').join('') + '<td class="num">' + fmtFt(depT.matured) + '</td></tr>';
   t += '</tbody></table></div>';
-  const html = '<div class="filters"><div class="chips">' + ['all'].concat(ys).map(x => '<button class="pill-btn" data-cmp-year="' + x + '" aria-pressed="' + (y === x) + '">' + (x === 'all' ? 'Teljes időszak' : x) + '</button>').join('') + '</div></div>' +
-    '<div class="grid g2"><div class="panel"><h2>Realizált eredmény bankonként</h2><p class="sub">' + (y === 'all' ? 'Teljes időszak' : y + '. év') + '</p><div class="chart"><canvas id="k-bar"></canvas></div></div>' +
+  const cmpMonths = realizedDated().map(attrDate).filter(d => yr === 'all' || d.slice(0, 4) === yr);
+  const html = '<div class="filters"><div class="chips">' + ['all'].concat(ys).map(x => '<button class="pill-btn" data-cmp-year="' + x + '" aria-pressed="' + (yr === x) + '">' + (x === 'all' ? 'Teljes időszak' : x) + '</button>').join('') + '</div>' +
+    periodControl('cmp-period', cmpMonths, y.length === 7 ? y : 'all', yr === 'all' ? 'Minden hónap' : 'Egész év', false) + '</div>' +
+    '<div class="grid g2"><div class="panel"><h2>Realizált eredmény bankonként</h2><p class="sub">' + h(periodLabel(y)) + '</p><div class="chart"><canvas id="k-bar"></canvas></div></div>' +
     '<div class="panel"><h2>Halmozott eredmény</h2><p class="sub">A bankok görbéi egymás mellett</p><div class="chart"><canvas id="k-cum"></canvas></div></div></div>' +
-    '<div class="panel section-gap"><h2>Havi eredmény bankonként</h2><p class="sub">Egymás melletti oszlopok</p><div class="chart tall"><canvas id="k-month"></canvas></div></div>' +
+    '<div class="panel section-gap"><h2>' + (y.length === 7 ? 'Napi eredmény bankonként' : 'Havi eredmény bankonként') + '</h2><p class="sub">' + h(periodLabel(y)) + ', egymás melletti oszlopok</p><div class="chart tall"><canvas id="k-month"></canvas></div></div>' +
     '<div class="section-gap">' + t + '</div>' +
     '<div class="grid g2 section-gap"><div class="panel"><h2>Nyereséges arány</h2><p class="sub">A lezárt ügyletek hány százaléka volt nyereséges</p><div class="chart short"><canvas id="k-win"></canvas></div></div>' +
     '<div class="panel"><h2>Átlagos eredmény ügyletenként</h2><p class="sub">Mekkora egy átlagos lezárt ügylet</p><div class="chart short"><canvas id="k-avg"></canvas></div></div></div>';
@@ -1856,10 +1884,12 @@ function viewCompare() {
     const labels = cols.map(c => c.b.short || c.b.name), colors = cols.map(c => c.b.color);
     mk('k-bar', {type: 'bar', data: {labels: labels.concat(['Összesen']), datasets: [{label: 'Eredmény', data: statsC.map(s => s.sum).concat([statsT.sum]), backgroundColor: colors.concat([css('--ink')]), borderRadius: 8, maxBarThickness: 60}]}, options: baseOpts({legend: false})});
     if (!chartCumulative('k-cum', bs.map(b => b.id), {total: false})) $('#k-cum').parentNode.innerHTML = noData();
-    const list = realizedDated(t => y === 'all' || attrDate(t).slice(0, 4) === y);
-    const keys = y === 'all' ? monthAxis(list) : monthsBetween(y + '-01', y + '-12');
-    const ds = cols.map(c => { const ms = monthSums(list.filter(t => t.bankId === c.b.id)); return {label: c.b.short || c.b.name, data: keys.map(k => Math.round((ms[k] || 0) * 100) / 100), backgroundColor: c.b.color, borderRadius: 4, maxBarThickness: 18}; });
-    if (keys.length) mk('k-month', {type: 'bar', data: {labels: keys.map(k => monthLabel(k)), datasets: ds}, options: baseOpts({})}); else $('#k-month').parentNode.innerHTML = noData();
+    const list = realizedDated(t => periodMatch(attrDate(t), y));
+    const daily = y.length === 7;
+    const keys = daily ? Array.from({length: +lastDayOf(y).slice(8)}, (_, i) => y + '-' + pad(i + 1)) : y === 'all' ? monthAxis(list) : monthsBetween(y + '-01', y + '-12');
+    const sumBy = arr => { const m = {}; arr.forEach(t => { const k = daily ? attrDate(t) : monthKey(attrDate(t)); m[k] = (m[k] || 0) + t.pnl; }); return m; };
+    const ds = cols.map(c => { const ms = sumBy(list.filter(t => t.bankId === c.b.id)); return {label: c.b.short || c.b.name, data: keys.map(k => Math.round((ms[k] || 0) * 100) / 100), backgroundColor: c.b.color, borderRadius: 4, maxBarThickness: 18}; });
+    if (keys.length && list.length) mk('k-month', {type: 'bar', data: {labels: keys.map(k => daily ? String(+k.slice(8)) : monthLabel(k)), datasets: ds}, options: baseOpts({})}); else $('#k-month').parentNode.innerHTML = noData('Ebben az időszakban nincs lezárt ügylet.');
     const wo = baseOpts({legend: false}); wo.scales.y.max = 100; wo.scales.y.ticks.callback = v => v + '%'; wo.plugins.tooltip.callbacks.label = c => nf1.format(c.parsed.y) + '%';
     mk('k-win', {type: 'bar', data: {labels, datasets: [{data: statsC.map(s => s.winRate != null ? Math.round(s.winRate * 1000) / 10 : 0), backgroundColor: colors, borderRadius: 8, maxBarThickness: 60}]}, options: wo});
     mk('k-avg', {type: 'bar', data: {labels, datasets: [{label: 'Átlag', data: statsC.map(s => s.avg || 0), backgroundColor: colors, borderRadius: 8, maxBarThickness: 60}]}, options: baseOpts({legend: false})});
@@ -1912,7 +1942,9 @@ function dueRow(i) {
     '<div class="due-right"><span class="due-days ' + (dd < 0 ? 'late' : dd <= 7 ? 'soon' : '') + '">' + dl + '</span>' + (amount ? '<span class="a">' + amount + '</span>' : '') + action + '</div></div>';
 }
 function viewDue() {
-  const t0 = TODAY(), all = dueItems().filter(i => UI.dueBank === 'all' || i.bankId === UI.dueBank);
+  const t0 = TODAY(), allB = dueItems().filter(i => UI.dueBank === 'all' || i.bankId === UI.dueBank);
+  const dm = UI.dueMonth || 'all';
+  const all = allB.filter(i => periodMatch(i.date, dm));
   const groups = [
     ['Lejárt, de még nyitott', i => i.date < t0],
     ['Ma', i => i.date === t0],
@@ -1920,8 +1952,8 @@ function viewDue() {
     ['A következő 30 napban', i => i.date > addDays(t0, 7) && i.date <= addDays(t0, 30)],
     ['Később', i => i.date > addDays(t0, 30)]
   ];
-  const noDate = S.trades.filter(t => (t.status === 'fuggo' || t.status === 'nyitott') && !t.fwdDate && (UI.dueBank === 'all' || t.bankId === UI.dueBank));
-  let html = '<div class="filters"><div class="chips"><button class="pill-btn" data-due-bank="all" aria-pressed="' + (UI.dueBank === 'all') + '">Minden bank</button>' + banksSorted().map(b => '<button class="pill-btn" data-due-bank="' + h(b.id) + '" aria-pressed="' + (UI.dueBank === b.id) + '">' + h(b.name) + '</button>').join('') + '</div></div>';
+  const noDate = dm !== 'all' ? [] : S.trades.filter(t => (t.status === 'fuggo' || t.status === 'nyitott') && !t.fwdDate && (UI.dueBank === 'all' || t.bankId === UI.dueBank));
+  let html = '<div class="filters"><div class="chips"><button class="pill-btn" data-due-bank="all" aria-pressed="' + (UI.dueBank === 'all') + '">Minden bank</button>' + banksSorted().map(b => '<button class="pill-btn" data-due-bank="' + h(b.id) + '" aria-pressed="' + (UI.dueBank === b.id) + '">' + h(b.name) + '</button>').join('') + '</div>' + periodControl('due-period', allB.map(i => i.date), dm, 'Minden hónap', false) + '</div>';
   const in30 = all.filter(i => i.date >= t0 && i.date <= addDays(t0, 30));
   const settle30 = in30.filter(i => i.type === 'settle').reduce((a, i) => a + i.amount, 0);
   const mat30 = in30.filter(i => i.type === 'maturity' && (i.ref.currency || 'HUF') === 'HUF').reduce((a, i) => a + (i.amount || 0), 0);
@@ -1989,14 +2021,14 @@ function tradeCard(t, withBank) {
   return '<button class="tcard ' + cls + '" data-edit-trade="' + h(t.id) + '">' +
     '<div class="tc-top">' + bank + chip + '<b class="tc-t">' + (t.kind === 'opcio' ? 'Opció' : (sideLabel(t) || '—')) + (t.sideInferred ? '*' : '') + ' ' + h(t.pair || '') + '</b><span class="mut tc-q">' + fmtQty(t.qty) + '</span>' + flags + pnl + '</div>' +
     '<div class="tc-grid">' + cell('Nyitás', fmtDateS(t.openDate), t.openRate != null ? fmtRate(t.openRate) : '') + cell('Határidő', fmtDateS(t.fwdDate), t.fwdPrice != null ? fmtRate(t.fwdPrice) : '') + cell('Order', fmtRate(t.orderPrice)) + cell('Zárás', fmtDateS(t.closeDate), t.closeRate != null ? fmtRate(t.closeRate) : '') + '</div>' +
-    (m ? '<div class="tc-note">Becsült eredmény a mostani ' + fmtRate(Math.round(m.cur * 1e5) / 1e5) + ' árfolyamon</div>' : t.status === 'nyitott' && isNum(t.pnl) ? '<div class="tc-note">Rögzített eredmény, a pozíció még nyitott</div>' : '') + '</button>';
+    (m ? '<div class="tc-note">Becsült eredmény a mostani ' + fmtRate(roundRate(m.cur)) + ' árfolyamon</div>' : t.status === 'nyitott' && isNum(t.pnl) ? '<div class="tc-note">Rögzített eredmény, a pozíció még nyitott</div>' : '') + '</button>';
 }
 function posCard(t) {
   const m = mtm(t), ri = rateInfo(t.pair);
   const dist = ri && isNum(t.orderPrice) ? (t.orderPrice - ri.v) / ri.v * 100 : null;
   const ref = isNum(t.fwdPrice) ? t.fwdPrice : t.openRate;
   return '<button class="tcard r-open" data-edit-trade="' + h(t.id) + '"><div class="tc-top"><span class="chip bank" style="background:' + h(bankColor(t.bankId)) + '">' + h(bankById(t.bankId).short) + '</span><b class="tc-t">' + (sideLabel(t) || '—') + ' ' + h(t.pair) + '</b><span class="mut tc-q">' + fmtQty(t.qty) + '</span><span class="tc-pnl ' + (m ? signCls(m.pnl) : 'mut') + '">' + (m ? fmtFt(m.pnl, {sign: true}) : '—') + '</span></div>' +
-    '<div class="tc-grid"><div><small>' + (isNum(t.fwdPrice) ? 'Határidős ár' : 'Nyitó árf.') + '</small><span>' + fmtRate(ref) + '</span></div><div><small>Most</small><span>' + (ri ? fmtRate(Math.round(ri.v * 1e5) / 1e5) : '—') + '</span>' + (m ? '<em class="' + signCls(m.diff) + '">' + (m.diff > 0 ? '+' : m.diff < 0 ? '−' : '') + nfRate.format(Math.abs(Math.round(m.diff * 1e5) / 1e5)) + '</em>' : '') + '</div><div><small>Order</small><span>' + fmtRate(t.orderPrice) + '</span>' + (dist != null ? '<em>' + (dist > 0 ? '+' : '') + nf2.format(dist) + '%</em>' : '') + '</div><div><small>Határidő</small><span>' + fmtDateS(t.fwdDate) + '</span></div></div></button>';
+    '<div class="tc-grid"><div><small>' + (isNum(t.fwdPrice) ? 'Határidős ár' : 'Nyitó árf.') + '</small><span>' + fmtRate(ref) + '</span></div><div><small>Most</small><span>' + (ri ? fmtRate(roundRate(ri.v)) : '—') + '</span>' + (m ? '<em class="' + signCls(m.diff) + '">' + (m.diff > 0 ? '+' : m.diff < 0 ? '−' : '') + nfRate.format(Math.abs(Math.round(m.diff * 1e5) / 1e5)) + '</em>' : '') + '</div><div><small>Order</small><span>' + fmtRate(t.orderPrice) + '</span>' + (dist != null ? '<em>' + (dist > 0 ? '+' : '') + nf2.format(dist) + '%</em>' : '') + '</div><div><small>Határidő</small><span>' + fmtDateS(t.fwdDate) + '</span></div></div></button>';
 }
 function viewMore() {
   const row = (attr, icon, t, s) => '<button class="more-row" ' + attr + '><span class="mr-ic">' + ic(icon) + '</span><span class="mr-t"><b>' + t + '</b>' + (s ? '<small>' + s + '</small>' : '') + '</span><span class="mr-ch" aria-hidden="true">›</span></button>';
@@ -2024,10 +2056,12 @@ function viewMarket() {
   const pairsUsed = Array.from(new Set(S.trades.filter(t => t.status !== 'zart').map(t => t.pair).filter(Boolean)));
   const pairs = Array.from(new Set(WATCH.concat(pairsUsed, Object.keys(S.market.rates || {}))));
   const age = ratesAge();
-  const open = S.trades.filter(t => t.status === 'nyitott' && t.kind === 'hatarido');
-  const opts = S.trades.filter(t => t.status === 'nyitott' && t.kind === 'opcio');
-  const pend = S.trades.filter(t => t.status === 'fuggo');
-  const tot = mtmTotal(S.trades);
+  const mm = UI.mktMonth || 'all', inM = t => periodMatch(t.fwdDate, mm);
+  const mktDates = S.trades.filter(t => t.status !== 'zart').map(t => t.fwdDate);
+  const open = S.trades.filter(t => t.status === 'nyitott' && t.kind === 'hatarido' && inM(t));
+  const opts = S.trades.filter(t => t.status === 'nyitott' && t.kind === 'opcio' && inM(t));
+  const pend = S.trades.filter(t => t.status === 'fuggo' && inM(t));
+  const tot = mtmTotal(open);
   let html = '';
   if (S.local) { if (Live.err) html += '<div class="banner warn">' + h(Live.err) + ' A legutóbbi letöltött árfolyamokat látod (' + fmtStamp(S.market.updatedAt) + ').</div>'; }
   else if (!Object.keys(S.market.rates || {}).length) html += '<div class="banner warn">Még nincs árfolyam rögzítve. Add meg a mai árfolyamokat, és minden nyitott pozíció piaci áron is megjelenik.</div>';
@@ -2057,7 +2091,7 @@ function viewMarket() {
   // open positions table
   const byBank = {};
   open.forEach(t => { const m = mtm(t); if (m) byBank[t.bankId] = (byBank[t.bankId] || 0) + m.pnl; });
-  html += '<div class="panel section-gap"><div class="panel-head"><div><h2>Nyitott pozíciók piaci áron</h2><p class="sub">Becsült eredmény, ha most zárnád, ugyanazzal a számítással, mint az Excelben</p></div></div>' +
+  html += '<div class="panel section-gap"><div class="panel-head"><div><h2>Nyitott pozíciók piaci áron</h2><p class="sub">Becsült eredmény, ha most zárnád, ugyanazzal a számítással, mint az Excelben' + (mm !== 'all' ? '. Határidő: ' + h(periodLabel(mm)) : '') + '</p></div>' + periodControl('mkt-period', mktDates, mm, 'Minden határidő', false) + '</div>' +
     '<div class="grid g4 stats-m" style="margin-bottom:12px"><div class="stat" style="box-shadow:none;background:var(--surface-2)"><div class="l">Összesen</div><div class="v ' + signCls(tot.sum) + '">' + fmtFt(tot.sum, {sign: true}) + '</div><div class="s">' + tot.n + ' pozíció' + (tot.missing ? ', ' + tot.missing + ' árfolyam nélkül' : '') + '</div></div>' +
     banksSorted().map(b => '<div class="stat" style="box-shadow:none;background:var(--surface-2);border-left:4px solid ' + h(b.color) + '"><div class="l">' + h(b.name) + '</div><div class="v ' + signCls(byBank[b.id] || 0) + '">' + fmtFt(byBank[b.id] || 0, {sign: true}) + '</div></div>').join('') + '</div>';
   if (open.length && isMobile()) {
@@ -2068,7 +2102,7 @@ function viewMarket() {
         const m = mtm(t), ri = rateInfo(t.pair);
         const dist = ri && isNum(t.orderPrice) ? (t.orderPrice - ri.v) / ri.v * 100 : null;
         return '<tr class="r-open" data-edit-trade="' + h(t.id) + '"><td><span class="chip bank" style="background:' + h(bankColor(t.bankId)) + '">' + h(bankById(t.bankId).short) + '</span></td><td><b>' + (sideLabel(t) || '—') + '</b></td><td><b>' + h(t.pair) + '</b></td><td class="num">' + fmtQty(t.qty) + '</td><td>' + fmtDate(t.openDate) + '</td><td class="num">' + (isNum(t.fwdPrice) ? fmtRate(t.fwdPrice) : isNum(t.openRate) ? fmtRate(t.openRate) + '<div class="mut" style="font-size:11px">nyitó árf.</div>' : '—') + '</td>' +
-          '<td class="num">' + (ri ? fmtRate(Math.round(ri.v * 1e5) / 1e5) + (ri.derived ? '<div class="mut" style="font-size:11px">számított</div>' : '') : '<span class="mut">nincs árfolyam</span>') + '</td>' +
+          '<td class="num">' + (ri ? fmtRate(roundRate(ri.v)) + (ri.derived ? '<div class="mut" style="font-size:11px">számított</div>' : '') : '<span class="mut">nincs árfolyam</span>') + '</td>' +
           '<td class="num ' + (m ? signCls(m.diff) : '') + '">' + (m ? (m.diff > 0 ? '+' : m.diff < 0 ? '−' : '') + nfRate.format(Math.abs(Math.round(m.diff * 1e5) / 1e5)) : '—') + '</td>' +
           '<td class="num pnl ' + (m ? signCls(m.pnl) : '') + '">' + (m ? fmtFt(m.pnl, {sign: true}) : '—') + '</td>' +
           '<td class="num">' + fmtRate(t.orderPrice) + (dist != null ? '<div class="mut" style="font-size:11.5px">' + (dist > 0 ? '+' : '') + nf2.format(dist) + '%</div>' : '') + '</td><td>' + fmtDate(t.fwdDate) + '</td></tr>';
@@ -2737,6 +2771,16 @@ document.addEventListener('click', async e => {
   if ((el = t.closest('[data-tf-status]'))) { UI.tf.status = el.dataset.tfStatus; $$('[data-tf-status]').forEach(b => b.setAttribute('aria-pressed', b === el)); renderTradeList(UI.bankId); return; }
   if ((el = t.closest('[data-sort]'))) { const k = el.dataset.sort; if (UI.tf.sort === k) UI.tf.dir = UI.tf.dir === 'asc' ? 'desc' : 'asc'; else { UI.tf.sort = k; UI.tf.dir = k === 'pair' ? 'asc' : 'desc'; } renderTradeList(UI.bankId); return; }
   if ((el = t.closest('[data-cmp-year]'))) { UI.cmpYear = el.dataset.cmpYear; render(); return; }
+  if ((el = t.closest('[data-pstep]'))) {
+    const [sid, dir] = el.dataset.pstep.split('|'), sel = document.getElementById(sid); if (!sel) return;
+    const months = Array.from(sel.querySelectorAll('optgroup[label="Hónap"] option')).map(o => o.value);
+    if (!months.length) return;
+    let i = months.indexOf(sel.value);
+    i = i < 0 ? 0 : Math.max(0, Math.min(months.length - 1, i + (+dir)));
+    if (months[i] === sel.value) return;
+    sel.value = months[i]; sel.dispatchEvent(new Event('change', {bubbles: true}));
+    return;
+  }
   if ((el = t.closest('[data-due-bank]'))) { UI.dueBank = el.dataset.dueBank; render(); return; }
   if ((el = t.closest('[data-eval-mode]'))) { UI.evalMode = el.dataset.evalMode; render(); return; }
   if ((el = t.closest('[data-eval-year]'))) { UI.evalYear = el.dataset.evalYear; UI.evalMonth = null; render(); return; }
@@ -2810,6 +2854,9 @@ document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'tf-pair') { UI.tf.pair = t.value; renderTradeList(UI.bankId); }
   else if (t.id === 'tf-year') { UI.tf.year = t.value; renderTradeList(UI.bankId); }
+  else if (t.id === 'cmp-period') { UI.cmpYear = t.value === 'all' ? (UI.cmpYear === 'all' ? 'all' : UI.cmpYear.slice(0, 4)) : t.value; render(); }
+  else if (t.id === 'due-period') { UI.dueMonth = t.value; render(); }
+  else if (t.id === 'mkt-period') { UI.mktMonth = t.value; render(); }
   else if (t.id === 'tf-sort') { const p = t.value.split('|'); UI.tf.sort = p[0]; UI.tf.dir = p[1]; renderTradeList(UI.bankId); }
   else if (t.id === 'vx-file' && t.files[0]) { vaultImportXlsx(t.files[0]); t.value = ''; }
   else if (t.id === 'imp-file' && t.files[0]) { importJSON(t.files[0]); t.value = ''; }
